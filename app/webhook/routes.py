@@ -1,21 +1,24 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime
-from app.extensions import collections
+from app.extensions import collections  # MongoDB collection instance
 
+# Create a Flask Blueprint for webhook-related routes
 webhook = Blueprint('Webhook', __name__, url_prefix='/webhook')
 
-# This route returns the latest 10 events from MongoDB (in JSON)
+
+# Route to get the latest 10 GitHub event documents from MongoDB
 @webhook.route("/events", methods=["GET"])
 def get_events():
-    events = list(collections.find().sort("timestamp", -1).limit(10))  # Get last 10 by newest timestamp
+    # Fetch last 10 documents sorted by descending timestamp (newest first)
+    events = list(collections.find().sort("timestamp", -1).limit(10))
 
-    # Convert MongoDB's ObjectId to string for JSON compatibility
+    # Convert ObjectId to string for JSON serialization
     for e in events:
         e["_id"] = str(e["_id"])
-    return jsonify(events)
+    return jsonify(events)  # Return the list as a JSON response
 
 
-# This route displays a basic web page that shows GitHub events, auto-refreshes every 15 seconds
+# Route to serve a simple HTML page that displays GitHub events
 @webhook.route("/ui")
 def ui():
     return '''
@@ -33,13 +36,13 @@ def ui():
         <div id="event-list">Loading...</div>
 
         <script>
-            // Function to load events from /events API and display them
+            // Asynchronous function to fetch and display recent events
             async function loadEvents() {
-                const res = await fetch('/webhook/events');
-                const data = await res.json();
+                const res = await fetch('/webhook/events');  // Fetch data from /events endpoint
+                const data = await res.json();               // Parse the JSON response
                 const container = document.getElementById('event-list');   
 
-                // Generate HTML for each event
+                // Create and display HTML based on each event type
                 container.innerHTML = data.map(event => {
                     const time = new Date(event.timestamp).toLocaleString();
                     if (event.action === "PUSH") {
@@ -53,27 +56,31 @@ def ui():
                 }).join('');
             }
 
-            loadEvents();                   // Load immediately
-            setInterval(loadEvents, 15000); // Reload every 15 seconds
+            loadEvents();                   // Initial load of events
+            setInterval(loadEvents, 15000); // Auto-refresh every 15 seconds
         </script>
     </body>
     </html>
     '''
 
 
+# Route to receive and process GitHub webhook POST requests
 @webhook.route('/receiver', methods=["POST"])
 def receiver():
     try:
-        data = request.json  
+        data = request.json  # Get JSON payload from GitHub
         print("Payload received:", data)
 
+        # Identify the event type from GitHub headers
         event = request.headers.get('X-GitHub-Event', 'ping')
         print("Event Type:", event)
 
+        # Handle 'push' events
         if event == 'push':
             author = data['pusher']['name']
-            to_branch = data['ref'].split('/')[-1]
+            to_branch = data['ref'].split('/')[-1]  # Extract branch name from ref
 
+            # Loop through all commits and store each as a separate document
             for commit in data.get('commits', []):
                 document = {
                     'request_id': commit['id'],
@@ -83,36 +90,39 @@ def receiver():
                     'to_branch': to_branch,
                     'timestamp': commit['timestamp']
                 }
-                collections.insert_one(document)
+                collections.insert_one(document)  # Insert into MongoDB
                 print("Saved commit document:", document)
 
+        # Handle 'pull_request' events
         elif event == 'pull_request':
             pr = data['pull_request']
-            action = data['action']
+            action = data['action']  # e.g., 'opened', 'closed'
             document = {
                 'request_id': str(pr['id']),
                 'author': pr['user']['login'],
                 'action': None,
-                'from_branch': pr['head']['ref'],
-                'to_branch': pr['base']['ref'],
-                'timestamp': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+                'from_branch': pr['head']['ref'],  # Source branch
+                'to_branch': pr['base']['ref'],    # Target branch
+                'timestamp': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')  # Current time in ISO format
             }
 
+            # Determine the specific PR action
             if action == 'opened':
                 document['action'] = "PULL_REQUEST"
             elif action == 'closed' and pr.get('merged'):
                 document['action'] = "MERGE"
             else:
-                return '', 204
+                return '', 204  # Ignore irrelevant PR actions
 
-            collections.insert_one(document)
+            collections.insert_one(document)  # Insert into MongoDB
             print("Saved PR document:", document)
 
         else:
-            return '', 204
+            return '', 204  # Ignore unhandled events
 
-        return "Receiver Work Successfully", 200
+        return "Receiver Work Successfully", 200  # Acknowledge receipt
 
     except Exception as e:
+        # Handle and log any errors
         print("ERROR:", e)
         return jsonify({'error': str(e)}), 500
