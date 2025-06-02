@@ -1,5 +1,5 @@
 
-# 📡 GitHub Webhook Listener with Flask + MongoDB + Live UI
+# 📡 GitHub Webhook Receiver with Flask + MongoDB + Live UI
 
 A lightweight Flask app to receive GitHub webhook events (Push, Pull Request, Merge), store them in MongoDB, and display the most recent 10 in a live web UI.
 
