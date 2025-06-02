@@ -4,6 +4,63 @@ from app.extensions import collections
 
 webhook = Blueprint('Webhook', __name__, url_prefix='/webhook')
 
+# This route returns the latest 10 events from MongoDB (in JSON)
+@webhook.route("/events", methods=["GET"])
+def get_events():
+    events = list(collections.find().sort("timestamp", -1).limit(10))  # Get last 10 by newest timestamp
+
+    # Convert MongoDB's ObjectId to string for JSON compatibility
+    for e in events:
+        e["_id"] = str(e["_id"])
+    return jsonify(events)
+
+
+# This route displays a basic web page that shows GitHub events, auto-refreshes every 15 seconds
+@webhook.route("/ui")
+def ui():
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>GitHub Webhook Events</title>
+        <style>
+            body { font-family: Arial; padding: 20px; background: #f4f4f4; }
+            .event { background: white; margin: 10px 0; padding: 10px; border-left: 5px solid #007BFF; }
+        </style>
+    </head>
+    <body>
+        <h2>Recent GitHub Events</h2>
+        <div id="event-list">Loading...</div>
+
+        <script>
+            // Function to load events from /events API and display them
+            async function loadEvents() {
+                const res = await fetch('/webhook/events');
+                const data = await res.json();
+                const container = document.getElementById('event-list');   
+
+                // Generate HTML for each event
+                container.innerHTML = data.map(event => {
+                    const time = new Date(event.timestamp).toLocaleString();
+                    if (event.action === "PUSH") {
+                        return `<div class="event"><b>${event.author}</b> pushed to <b>${event.to_branch}</b> at ${time}</div>`;
+                    } else if (event.action === "PULL_REQUEST") {
+                        return `<div class="event"><b>${event.author}</b> opened a PR from <b>${event.from_branch}</b> to <b>${event.to_branch}</b> at ${time}</div>`;
+                    } else if (event.action === "MERGE") {
+                        return `<div class="event"><b>${event.author}</b> merged <b>${event.from_branch}</b> to <b>${event.to_branch}</b> at ${time}</div>`;
+                    }
+                    return '';
+                }).join('');
+            }
+
+            loadEvents();                   // Load immediately
+            setInterval(loadEvents, 15000); // Reload every 15 seconds
+        </script>
+    </body>
+    </html>
+    '''
+
+
 @webhook.route('/receiver', methods=["POST"])
 def receiver():
     try:
